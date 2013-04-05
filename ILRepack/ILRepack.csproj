@@ -172,4 +172,37 @@
   </ItemGroup>
   <ItemGroup />
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+  <Import Project="$(SolutionDir)\packages\ILRepack.MSBuild.Task.1.0.7\tools\ILRepack.MSBuild.Task.Targets" />
+
+  <Target Name="AfterBuild">
+    <PropertyGroup>
+      <AssemblyAbsPath>$(MSBuildThisFileDirectory)\$(OutputPath)</AssemblyAbsPath>
+    </PropertyGroup>
+
+    <PropertyGroup Condition="'$(Configuration)' == 'Release' Or '$(Configuration)' == 'Debug'">
+      <AssemblyFinalName>ILRepack.exe</AssemblyFinalName>
+      <AssemblyTargetKind>Exe</AssemblyTargetKind>
+    </PropertyGroup>
+
+    <PropertyGroup Condition="'$(Configuration)' == 'Release-Library' Or '$(Configuration)' == 'Debug-Library'">
+      <AssemblyFinalName>ILRepack.dll</AssemblyFinalName>
+      <AssemblyTargetKind>Dll</AssemblyTargetKind>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <MergeFiles Include="$(OutputPath)\$(AssemblyFinalName)" />
+      <MergeFiles Include="$(OutputPath)\Mono.Cecil.dll" />
+      <MergeFiles Include="$(OutputPath)\Mono.Cecil.Mdb.dll" />
+      <MergeFiles Include="$(OutputPath)\Mono.Cecil.Pdb.dll" />
+      <MergeFiles Include="$(OutputPath)\Mono.Posix.dll" />
+    </ItemGroup>
+
+    <ILRepack
+      Parallel="true"
+      InputAssemblies="@(MergeFiles)"
+      TargetKind="$(AssemblyTargetKind)"
+      OutputFile="$(OutputPath)\$(AssemblyFinalName)"
+      />
+  </Target>
+
 </Project>
