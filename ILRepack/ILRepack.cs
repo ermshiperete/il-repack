@@ -1,4 +1,4 @@
-﻿//
+//
 // Copyright (c) 2011 Francois Valdy
 //
 //   Licensed under the Apache License, Version 2.0 (the "License");
@@ -34,7 +34,7 @@ namespace ILRepacking
         internal ILogger Logger;
 
         internal IList<string> MergedAssemblyFiles { get; set; }
-        internal string PrimaryAssemblyFile { get; set; }
+        public string PrimaryAssemblyFile { get; set; }
         // contains all 'other' assemblies, but not the primary assembly
         public IList<AssemblyDefinition> OtherAssemblies { get; private set; }
         // contains all assemblies, primary (first one) and 'other'
@@ -86,13 +86,14 @@ namespace ILRepacking
                 if (result.IsPrimary)
                 {
                     PrimaryAssemblyDefinition = result.Definition;
-                    PrimaryAssemblyFile = result.Assembly;
+                    if (string.IsNullOrEmpty(PrimaryAssemblyFile))
+                        PrimaryAssemblyFile = result.Assembly;
                 }
                 else
                     OtherAssemblies.Add(result.Definition);
-
+                    
                 debugSymbolsRead |= result.SymbolsRead;
-            }
+                }
             // prevent writing PDB if we haven't read any
             Options.DebugInfo = debugSymbolsRead;
 
@@ -103,42 +104,42 @@ namespace ILRepacking
         private AssemblyDefinitionContainer ReadInputAssembly(string assembly, bool isPrimary)
         {
             Logger.Info("Adding assembly for merge: " + assembly);
-            try
-            {
+                    try
+                    {
                 ReaderParameters rp = new ReaderParameters(ReadingMode.Immediate) { AssemblyResolver = GlobalAssemblyResolver };
-                // read PDB/MDB?
+                        // read PDB/MDB?
                 if (Options.DebugInfo && (File.Exists(Path.ChangeExtension(assembly, "pdb")) || File.Exists(assembly + ".mdb")))
-                {
-                    rp.ReadSymbols = true;
-                }
-                AssemblyDefinition mergeAsm;
-                try
-                {
-                    mergeAsm = AssemblyDefinition.ReadAssembly(assembly, rp);
-                }
+                        {
+                            rp.ReadSymbols = true;
+                        }
+                        AssemblyDefinition mergeAsm;
+                        try
+                        {
+                            mergeAsm = AssemblyDefinition.ReadAssembly(assembly, rp);
+                        }
                 catch (BadImageFormatException e) when (!rp.ReadSymbols)
-                {
+                        {
                     throw new InvalidOperationException(
                         "ILRepack does not support merging non-.NET libraries (e.g.: native libraries)", e);
                 }
-                // cope with invalid symbol file
+                            // cope with invalid symbol file
                 catch (Exception) when (rp.ReadSymbols)
-                {
-                    rp.ReadSymbols = false;
+                            {
+                                rp.ReadSymbols = false;
                     try
                     {
-                        mergeAsm = AssemblyDefinition.ReadAssembly(assembly, rp);
-                    }
+                                mergeAsm = AssemblyDefinition.ReadAssembly(assembly, rp);
+                            }
                     catch (BadImageFormatException e)
-                    {
+                            {
                         throw new InvalidOperationException(
                             "ILRepack does not support merging non-.NET libraries (e.g.: native libraries)", e);
-                    }
+                            }
                     Logger.Info("Failed to load debug information for " + assembly);
-                }
+                        }
 
                 if (!Options.AllowZeroPeKind && (mergeAsm.MainModule.Attributes & ModuleAttributes.ILOnly) == 0)
-                    throw new ArgumentException("Failed to load assembly with Zero PeKind: " + assembly);
+                            throw new ArgumentException("Failed to load assembly with Zero PeKind: " + assembly);
 
                 return new AssemblyDefinitionContainer
                 {
@@ -147,13 +148,13 @@ namespace ILRepacking
                     IsPrimary = isPrimary,
                     SymbolsRead = rp.ReadSymbols
                 };
-            }
-            catch
-            {
+                    }
+                    catch
+                    {
                 Logger.Error("Failed to load assembly " + assembly);
-                throw;
+                        throw;
+                    }
             }
-        }
 
         IMetadataScope IRepackContext.MergeScope(IMetadataScope scope)
         {
@@ -194,10 +195,10 @@ namespace ILRepacking
                 _platformFixer.ParseTargetPlatformDirectory(runtime, Options.TargetPlatformDirectory);
             }
             return runtime;
-        }
+            }
 
         private string ResolveTargetPlatformDirectory(string version)
-        {
+            {
             if (version == null)
                 return null;
             var platformBasePath = Path.GetDirectoryName(Path.GetDirectoryName(typeof(string).Assembly.Location));
@@ -211,7 +212,7 @@ namespace ILRepacking
                 throw new ArgumentException($"Failed to find target platform '{Options.TargetPlatformVersion}' in '{platformBasePath}'");
             Logger.Info($"Target platform directory resolved to {targetPlatformDirectory}");
             return targetPlatformDirectory;
-        }
+            }
 
         public static IEnumerable<AssemblyName> GetRepackAssemblyNames(Type typeInRepackedAssembly)
         {
@@ -219,7 +220,7 @@ namespace ILRepacking
             {
                 using (Stream stream = typeInRepackedAssembly.Assembly.GetManifestResourceStream(ResourcesRepackStep.ILRepackListResourceName))
                 if (stream != null)
-                {
+            {
                     string[] list = (string[])new BinaryFormatter().Deserialize(stream);
                     return list.Select(x => new AssemblyName(x));
                 }
@@ -233,7 +234,7 @@ namespace ILRepacking
         public static AssemblyName GetRepackAssemblyName(IEnumerable<AssemblyName> repackAssemblyNames, string repackedAssemblyName, Type fallbackType)
         {
             return repackAssemblyNames?.FirstOrDefault(name => name.Name == repackedAssemblyName) ?? fallbackType.Assembly.GetName();
-        }
+                }
 
         void PrintRepackVersion()
         {
@@ -259,9 +260,9 @@ namespace ILRepacking
             ResolveSearchDirectories();
 
             // Read input assemblies only after all properties are set.
-            ReadInputAssemblies();
+                ReadInputAssemblies();
             GlobalAssemblyResolver.RegisterAssemblies(MergedAssemblies);
-
+          
             _platformFixer = new PlatformFixer(this, PrimaryAssemblyMainModule.Runtime);
             _mappingHandler = new MappingHandler();
             bool hadStrongName = PrimaryAssemblyDefinition.Name.HasPublicKey;
@@ -287,12 +288,12 @@ namespace ILRepacking
                 asmName.Name = mainModuleName;
                 TargetAssemblyDefinition = AssemblyDefinition.CreateAssembly(asmName, mainModuleName,
                     new ModuleParameters()
-                    {
-                        Kind = kind,
-                        Architecture = PrimaryAssemblyMainModule.Architecture,
+                        {
+                            Kind = kind,
+                            Architecture = PrimaryAssemblyMainModule.Architecture,
                         AssemblyResolver = GlobalAssemblyResolver,
-                        Runtime = runtime
-                    });
+                            Runtime = runtime
+                        });
             }
             else
             {
@@ -337,10 +338,10 @@ namespace ILRepacking
             // create output directory if it does not exist
             var outputDir = Path.GetDirectoryName(Options.OutputFile);
             if (!string.IsNullOrEmpty(outputDir) && !Directory.Exists(outputDir))
-            {
+                {
                 Logger.Info("Output directory does not exist. Creating output directory: " + outputDir);
                 Directory.CreateDirectory(outputDir);
-            }
+                    }
             TargetAssemblyDefinition.Write(Options.OutputFile, parameters);
             Logger.Info("Writing output assembly to disk");
             // If this is an executable and we are on linux/osx we should copy file permissions from
@@ -360,9 +361,9 @@ namespace ILRepacking
             if (Options.XmlDocumentation)
                 DocumentationMerger.Process(this);
         }
-
+            
         private void ResolveSearchDirectories()
-        {
+            {
             foreach (var dir in Options.SearchDirectories)
                 GlobalAssemblyResolver.AddSearchDirectory(dir);
             var targetPlatformDirectory = Options.TargetPlatformDirectory ?? ResolveTargetPlatformDirectory(Options.TargetPlatformVersion);
@@ -444,7 +445,7 @@ namespace ILRepacking
         string IRepackContext.FixReferenceInIkvmAttribute(string content)
         {
             return FixStr(content, true);
-        }
+                }
 
         private string FixStr(string content, bool javaAttribute)
         {
@@ -499,7 +500,7 @@ namespace ILRepacking
         TypeDefinition IRepackContext.GetMergedTypeFromTypeRef(TypeReference reference)
         {
             return _mappingHandler.GetRemappedType(reference);
-        }
+            }
 
         TypeReference IRepackContext.GetExportedTypeFromTypeRef(TypeReference type)
         {
