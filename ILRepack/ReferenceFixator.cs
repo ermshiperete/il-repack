@@ -13,30 +13,33 @@
 //   See the License for the specific language governing permissions and
 //   limitations under the License.
 //
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
+
 using Mono.Cecil;
 using Mono.Cecil.Cil;
 using Mono.Collections.Generic;
+using System;
+using System.Collections.Generic;
+using System.Linq;
 
 namespace ILRepacking
 {
     internal class ReferenceFixator
     {
-        private readonly ILRepack repack;
+        private readonly ILogger _logger;
+        private readonly IRepackContext _repackContext;
         private string targetAssemblyPublicKeyBlobString;
         private readonly HashSet<GenericParameter> fixedGenericParameters = new HashSet<GenericParameter>();
+        private bool renameIkvmAttributeReference;
 
-        public ReferenceFixator(ILRepack iLRepack)
+        public ReferenceFixator(ILogger logger, IRepackContext repackContext)
         {
-            this.repack = iLRepack;
+            _repackContext = repackContext;
+            _logger = logger;
         }
 
         private ModuleReference Fix(ModuleReference moduleRef)
         {
-            ModuleReference nmr = repack.TargetAssemblyMainModule.ModuleReferences.First(x => x.Name == moduleRef.Name);
+            ModuleReference nmr = _repackContext.TargetAssemblyMainModule.ModuleReferences.FirstOrDefault(x => x.Name == moduleRef.Name);
             if (nmr == null)
                 throw new NullReferenceException("referenced module not found: \"" + moduleRef.Name + "\".");
             return nmr;
@@ -47,7 +50,7 @@ namespace ILRepacking
             field.DeclaringType = Fix(field.DeclaringType);
             if (field.DeclaringType.IsDefinition && !field.IsDefinition)
             {
-                FieldDefinition def = ((TypeDefinition)field.DeclaringType).Fields.First(x => x.Name == field.Name);
+                FieldDefinition def = ((TypeDefinition)field.DeclaringType).Fields.FirstOrDefault(x => x.Name == field.Name);
                 if (def == null)
                     throw new NullReferenceException("Field \"" + field + "\" not found in type \"" + field.DeclaringType + "\".");
                 return def;
@@ -76,18 +79,18 @@ namespace ILRepacking
             if (type is TypeSpecification)
                 return Fix((TypeSpecification)type);
 
-            type = repack.GetExportedTypeFromTypeRef(type);
+            type = _repackContext.GetExportedTypeFromTypeRef(type);
 
-            var t2 = repack.GetMergedTypeFromTypeRef(type);
+            var t2 = _repackContext.GetMergedTypeFromTypeRef(type);
             if (t2 != null)
                 return t2;
-            
+
             if (type.IsNested)
                 type.DeclaringType = Fix(type.DeclaringType);
 
             if (type.DeclaringType is TypeDefinition)
                 return ((TypeDefinition)type.DeclaringType).NestedTypes.FirstOrDefault(x => x.FullName == type.FullName);
-            
+
             return type;
         }
 
@@ -155,11 +158,13 @@ namespace ILRepacking
         private object FixCustomAttributeValue(object obj)
         {
             if (obj is TypeReference)
-                return Fix((TypeReference) obj);
+                return Fix((TypeReference)obj);
             if (obj is CustomAttributeArgument)
                 return Fix((CustomAttributeArgument)obj);
             if (obj is CustomAttributeArgument[])
-                return ((CustomAttributeArgument[])obj).Select(a => Fix(a)).ToArray();
+                return Array.ConvertAll((CustomAttributeArgument[])obj, a => Fix(a));
+            if (renameIkvmAttributeReference && obj is string)
+                return _repackContext.FixReferenceInIkvmAttribute((string)obj);
             return obj;
         }
 
@@ -204,10 +209,10 @@ namespace ILRepacking
                             {
                                 if (prop.Name == "PublicKeyBlob")
                                 {
-                                    if (repack.TargetAssemblyDefinition.Name.HasPublicKey)
+                                    if (_repackContext.TargetAssemblyDefinition.Name.HasPublicKey)
                                     {
                                         if (targetAssemblyPublicKeyBlobString == null)
-                                            foreach (byte b in repack.TargetAssemblyDefinition.Name.PublicKey)
+                                            foreach (byte b in _repackContext.TargetAssemblyDefinition.Name.PublicKey)
                                                 targetAssemblyPublicKeyBlobString += b.ToString("X").PadLeft(2, '0');
                                         if (prop.Argument.Type.FullName != "System.String")
                                             throw new NotSupportedException("Invalid type of argument, expected string");
@@ -218,19 +223,19 @@ namespace ILRepacking
                                     }
                                     else
                                     {
-                                        repack.WARN("SecurityPermission with PublicKeyBlob found but target has no strong name!");
+                                        _logger.Warn("SecurityPermission with PublicKeyBlob found but target has no strong name!");
                                     }
                                 }
                             }
                         }
                     }
                 }
-                if ((repack.TargetAssemblyMainModule.Runtime == TargetRuntime.Net_1_0) || (repack.TargetAssemblyMainModule.Runtime == TargetRuntime.Net_1_1))
+                if ((_repackContext.TargetAssemblyMainModule.Runtime == TargetRuntime.Net_1_0) || (_repackContext.TargetAssemblyMainModule.Runtime == TargetRuntime.Net_1_1))
                 {
                     SecurityDeclaration[] sdArray = securitydeclarations.ToArray();
                     securitydeclarations.Clear();
                     foreach (SecurityDeclaration sd in sdArray)
-                        securitydeclarations.Add(PermissionsetHelper.Permission2XmlSet(sd, repack.TargetAssemblyMainModule));
+                        securitydeclarations.Add(PermissionsetHelper.Permission2XmlSet(sd, _repackContext.TargetAssemblyMainModule));
                 }
             }
         }
@@ -281,29 +286,29 @@ namespace ILRepacking
                 call_site.ReturnType = Fix(call_site.ReturnType);
             }
             else switch (instr.OpCode.OperandType)
-            {
-                case OperandType.InlineField:
-                    instr.Operand = Fix((FieldReference)instr.Operand);
-                    break;
-                case OperandType.InlineMethod:
-                    instr.Operand = Fix((MethodReference)instr.Operand);
-                    break;
-                case OperandType.InlineType:
-                    instr.Operand = Fix((TypeReference)instr.Operand);
-                    break;
-                case OperandType.InlineTok:
-                    if (instr.Operand is TypeReference)
-                        instr.Operand = Fix((TypeReference)instr.Operand);
-                    else if (instr.Operand is FieldReference)
+                {
+                    case OperandType.InlineField:
                         instr.Operand = Fix((FieldReference)instr.Operand);
-                    else if (instr.Operand is MethodReference)
+                        break;
+                    case OperandType.InlineMethod:
                         instr.Operand = Fix((MethodReference)instr.Operand);
-                    else
-                        throw new InvalidOperationException();
-                    break;
-                default:
-                    break;
-            }
+                        break;
+                    case OperandType.InlineType:
+                        instr.Operand = Fix((TypeReference)instr.Operand);
+                        break;
+                    case OperandType.InlineTok:
+                        if (instr.Operand is TypeReference)
+                            instr.Operand = Fix((TypeReference)instr.Operand);
+                        else if (instr.Operand is FieldReference)
+                            instr.Operand = Fix((FieldReference)instr.Operand);
+                        else if (instr.Operand is MethodReference)
+                            instr.Operand = Fix((MethodReference)instr.Operand);
+                        else
+                            throw new InvalidOperationException();
+                        break;
+                    default:
+                        break;
+                }
         }
 
         internal void FixReferences(Collection<ExportedType> exportedTypes)
@@ -315,11 +320,21 @@ namespace ILRepacking
         {
             foreach (CustomAttribute attribute in attributes)
             {
+                renameIkvmAttributeReference = IsAnnotation(attribute.AttributeType.Resolve());
                 attribute.Constructor = Fix(attribute.Constructor);
                 FixReferences(attribute.ConstructorArguments);
                 FixReferences(attribute.Fields);
                 FixReferences(attribute.Properties);
             }
+        }
+
+        private bool IsAnnotation(TypeDefinition typeAttribute)
+        {
+            if (typeAttribute == null)
+                return false;
+            if (typeAttribute.Interfaces.Any(@interface => @interface.FullName == "java.lang.annotation.Annotation"))
+                return true;
+            return typeAttribute.BaseType != null && IsAnnotation(typeAttribute.BaseType.Resolve());
         }
 
         private void FixReferences(Collection<TypeReference> refs)
@@ -413,7 +428,7 @@ namespace ILRepacking
             // if declaring type is in our new merged module, return the definition
             if (declaringType.IsDefinition && !method.IsDefinition)
             {
-                MethodDefinition def = new ReflectionHelper(repack).FindMethodDefinitionInType((TypeDefinition)declaringType, method);
+                MethodDefinition def = new ReflectionHelper(_repackContext).FindMethodDefinitionInType((TypeDefinition)declaringType, method);
                 if (def != null)
                     return def;
             }
@@ -432,9 +447,9 @@ namespace ILRepacking
                                      ? method.ReturnType
                                      : method.Parameters.First(x => x.ParameterType.IsDefinition).ParameterType;
                 // warn about invalid merge assembly set, as this method is not gonna work fine (peverify would warn as well)
-                repack.WARN("Method reference is used with definition return type / parameter. Indicates a likely invalid set of assemblies, consider one of the following");
-                repack.WARN(" - Remove the assembly defining " + culprit + " from the merge");
-                repack.WARN(" - Add assembly defining " + method + " to the merge");
+                _logger.Warn("Method reference is used with definition return type / parameter. Indicates a likely invalid set of assemblies, consider one of the following");
+                _logger.Warn(" - Remove the assembly defining " + culprit + " from the merge");
+                _logger.Warn(" - Add assembly defining " + method + " to the merge");
 
                 // one case where it'll work correctly however (but doesn't seem common):
                 // A references B
@@ -563,7 +578,7 @@ namespace ILRepacking
                         // it's a Definition, and in our module
                         MethodDefinition fixedOvDef = (MethodDefinition)fixedOv;
                         if (fixedOvDef.IsVirtual)
-                            Fix((MethodDefinition) fixedOv, meth);
+                            Fix((MethodDefinition)fixedOv, meth);
                     }
                 }
             }
